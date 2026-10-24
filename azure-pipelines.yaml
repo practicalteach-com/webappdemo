@@ -51,3 +51,230 @@ stages:
 
         - script: dotnet build $(webProject) --configuration $(buildConfiguration) --no-restore
           displayName: Build
+
+# =====================================================
+# PACKAGE
+# =====================================================
+- stage: Package
+  displayName: Package
+  dependsOn: Build   # FIXED
+
+  condition: |
+    and(
+      succeeded(),
+      ne(variables['Build.Reason'], 'PullRequest')
+    )
+
+  jobs:
+
+    - job: PackageJob
+
+      steps:
+
+        - script: |
+            dotnet publish $(webProject) \
+              --configuration $(buildConfiguration) \
+              --output $(Build.ArtifactStagingDirectory)/webapp
+          displayName: Publish Web App
+
+        # Explicitly restore for the Linux runtime
+        - script: |
+            dotnet restore $(webProject) --runtime linux-x64
+          displayName: Restore Tools for Linux
+
+        # Install EF tool to generate migration bundle
+        - script: dotnet tool install --global dotnet-ef
+          displayName: Install EF Tool
+
+        # Generate migration bundle
+        - script: |
+            dotnet ef migrations bundle \
+              --project $(webProject) \
+              --startup-project $(webProject) \
+              --configuration $(buildConfiguration) \
+              --runtime linux-x64 \
+              --output $(Build.ArtifactStagingDirectory)/webapp/efbundle
+          displayName: Generate EF Migration Bundle
+
+        - publish: $(Build.ArtifactStagingDirectory)
+          artifact: drop
+
+# =====================================================
+# DEPLOY TEST
+# =====================================================
+- stage: Deploy_Test
+  displayName: Deploy to Test
+
+  dependsOn: Package
+
+  condition: |
+    and(
+      succeeded(),
+      eq(variables['Build.SourceBranch'], 'refs/heads/main'),
+      ne(variables['Build.Reason'], 'PullRequest')
+    )
+
+  jobs:
+  - deployment: DeployTest
+    environment: Test
+
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: drop
+
+          - script: |
+              echo "Testing DNS..."
+              nslookup practicalteachdemo.database.windows.net
+
+              echo "Testing port..."
+              nc -zv practicalteachdemo.database.windows.net 1433
+            displayName: Network Diagnostics
+
+          - task: AzureCLI@2
+            displayName: Run EF Migration Bundle
+            retryCountOnTaskFailure: 3
+            inputs:
+              azureSubscription: 'WebAppServiceConn'
+              scriptType: bash
+              scriptLocation: inlineScript
+              addSpnToEnvironment: true        # <-- injects $servicePrincipalId, $idToken, $tenantId
+              inlineScript: |
+                echo "===== DEBUG: Verify WIF identity ====="
+                echo "SP ID: $servicePrincipalId"
+                echo "Tenant: $tenantId"
+                # idToken is the federated OIDC token - don't print it
+
+                echo "===== DEBUG: Confirm CLI auth ====="
+                az account show --query user.name -o tsv
+
+                echo "Connection string: $(TestDbConnectionString)"
+
+                echo "===== DEBUG: Confirm SQL token obtainable ====="
+                az account get-access-token --resource https://database.windows.net --query accessToken -o tsv | cut -c1-20
+
+                echo "===== RUNNING EF MIGRATION BUNDLE ====="
+                cd $(Pipeline.Workspace)/drop/webapp
+                chmod +x ./efbundle
+
+                # Set env vars so DefaultAzureCredential resolves to AzureCliCredential
+                AZURE_CLIENT_ID=$servicePrincipalId \
+                AZURE_TENANT_ID=$tenantId \
+                AZURE_FEDERATED_TOKEN=$idToken \
+                ./efbundle --connection "$(TestDbConnectionString)"
+
+          - task: AzureWebApp@1
+            inputs:
+              azureSubscription: 'WebAppServiceConn'
+              appType: 'webApp'
+              appName: 'webappdemotest'
+              package: '$(Pipeline.Workspace)/drop/webapp'
+              appSettings: |
+                -ASPNETCORE_ENVIRONMENT "Test"
+
+          - task: AzureAppServiceSettings@1
+            displayName: Set Connection Strings
+            inputs:
+              azureSubscription: 'WebAppServiceConn'
+              appName: 'webappdemotest'
+              connectionStrings: |
+                [
+                  {
+                    "name": "ContactDbContext",
+                    "value": "$(TestDbConnectionString)",
+                    "type": "SQLAzure",
+                    "slotSetting": false
+                  }
+                ]
+
+# =====================================================
+# DEPLOY Production
+# =====================================================
+- stage: Deploy_Production
+  displayName: Deploy to Production
+
+  dependsOn: Package
+
+  condition: |
+    and(
+      succeeded(),
+      startsWith(variables['Build.SourceBranch'], 'refs/heads/release/')
+    )
+
+  jobs:
+
+  - deployment: DeployProduction
+    environment: Production
+
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: drop
+
+          - script: |
+              echo "Testing DNS..."
+              nslookup practicalteachdemo.database.windows.net
+
+              echo "Testing port..."
+              nc -zv practicalteachdemo.database.windows.net 1433
+            displayName: Network Diagnostics
+
+          - task: AzureCLI@2
+            displayName: Run EF Migration Bundle
+            retryCountOnTaskFailure: 3
+            inputs:
+              azureSubscription: 'WebAppServiceConn'
+              scriptType: bash
+              scriptLocation: inlineScript
+              addSpnToEnvironment: true        # <-- injects $servicePrincipalId, $idToken, $tenantId
+              inlineScript: |
+                echo "===== DEBUG: Verify WIF identity ====="
+                echo "SP ID: $servicePrincipalId"
+                echo "Tenant: $tenantId"
+                # idToken is the federated OIDC token - don't print it
+
+                echo "===== DEBUG: Confirm CLI auth ====="
+                az account show --query user.name -o tsv
+
+                echo "Connection string: $(ProdDbConnectionString)"
+
+                echo "===== DEBUG: Confirm SQL token obtainable ====="
+                az account get-access-token --resource https://database.windows.net --query accessToken -o tsv | cut -c1-20
+
+                echo "===== RUNNING EF MIGRATION BUNDLE ====="
+                cd $(Pipeline.Workspace)/drop/webapp
+                chmod +x ./efbundle
+
+                # Set env vars so DefaultAzureCredential resolves to AzureCliCredential
+                AZURE_CLIENT_ID=$servicePrincipalId \
+                AZURE_TENANT_ID=$tenantId \
+                AZURE_FEDERATED_TOKEN=$idToken \
+                ./efbundle --connection "$(ProdDbConnectionString)"
+
+          - task: AzureWebApp@1
+            inputs:
+              azureSubscription: 'WebAppServiceConn'
+              appType: 'webApp'
+              appName: 'webappdemoprod'
+              package: '$(Pipeline.Workspace)/drop/webapp'
+              appSettings: |
+                -ASPNETCORE_ENVIRONMENT "Production"
+
+          - task: AzureAppServiceSettings@1
+            displayName: Set Connection Strings
+            inputs:
+              azureSubscription: 'WebAppServiceConn'
+              appName: 'webappdemoprod'
+              connectionStrings: |
+                [
+                  {
+                    "name": "ContactDbContext",
+                    "value": "$(ProdDbConnectionString)",
+                    "type": "SQLAzure",
+                    "slotSetting": false
+                  }
+                ]
