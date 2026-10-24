@@ -1,0 +1,53 @@
+trigger:
+  branches:
+    include:
+      - main
+      - release/*
+
+# Below is not applicable for Azure DevOps. DevOps uses branch build validation feature.
+# pr:
+#   branches:
+#     include:
+#       - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+parameters:
+  - name: buildConfiguration
+    displayName: 'Build Configuration'
+    type: string
+    default: 'Release'
+    values:
+      - Release
+      - Debug
+    
+
+variables:
+  - name: webProject
+    value: 'WebApp/WebApp.csproj'
+  - name: buildConfiguration
+    value: ${{ parameters.buildConfiguration }}
+  - group: WebAppVarGroup
+
+stages:
+
+# =====================================================
+# BUILD
+# =====================================================
+- stage: Build
+  displayName: Build and Test
+
+  jobs:
+    - job: BuildAndTest
+
+      steps:
+        - task: UseDotNet@2
+          inputs:
+            packageType: 'sdk'
+
+        - script: dotnet restore $(webProject)
+          displayName: Restore
+
+        - script: dotnet build $(webProject) --configuration $(buildConfiguration) --no-restore
+          displayName: Build
