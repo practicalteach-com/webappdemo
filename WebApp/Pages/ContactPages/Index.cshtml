@@ -22,6 +22,9 @@
             <th>
                 @Html.DisplayNameFor(model => model.Contact[0].Email)
             </th>
+            <th>
+                @Html.DisplayNameFor(model => model.Contact[0].Instagram)
+            </th>
             <th></th>
         </tr>
     </thead>
@@ -36,6 +39,9 @@
             </td>
             <td>
                 @Html.DisplayFor(model => item.Email)
+            </td>
+            <td>
+                @Html.DisplayFor(model => item.Instagram)
             </td>
             <td>
                 <a asp-page="./Edit" asp-route-id="@item.Id">Edit</a> |

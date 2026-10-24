@@ -30,6 +30,11 @@
                 <span asp-validation-for="Contact.Email" class="text-danger"></span>
             </div>
             <div class="form-group">
+                <label asp-for="Contact.Instagram" class="control-label"></label>
+                <input asp-for="Contact.Instagram" class="form-control" />
+                <span asp-validation-for="Contact.Instagram" class="text-danger"></span>
+            </div>
+            <div class="form-group">
                 <input type="submit" value="Save" class="btn btn-primary" />
             </div>
         </form>
