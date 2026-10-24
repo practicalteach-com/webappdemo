@@ -6,10 +6,13 @@
     {
         [Key]
         public long Id { get; set; }
+        [StringLength(100)]
         public string? Name { get; set; }
-        [RegularExpression(@"^0[0-9]+")]
+        [RegularExpression(@"^0[0-9]+"), StringLength(20)]
         public string? Phone { get; set; }
+        [StringLength(100)]
         public string? Email { get; set; }
+        [StringLength(200)]
         public string? Instagram { get; set; }
 
     }
