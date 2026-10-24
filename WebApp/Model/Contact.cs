@@ -14,6 +14,8 @@
         public string? Email { get; set; }
         [StringLength(200)]
         public string? Instagram { get; set; }
+        [StringLength(255)]
+        public string? Address { get; set; }
 
     }
 }
