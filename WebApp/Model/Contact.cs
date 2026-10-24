@@ -10,6 +10,7 @@
         [RegularExpression(@"^0[0-9]+")]
         public string? Phone { get; set; }
         public string? Email { get; set; }
+        public string? Instagram { get; set; }
 
     }
 }
